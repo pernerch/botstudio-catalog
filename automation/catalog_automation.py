@@ -238,6 +238,7 @@ def publish(api, number, repository_id):
         "body": json.dumps({
             "schema_version": 1, "pull_request": number, "head": pr["head"]["sha"],
             "submitter": descriptor["submitter"], "archive_sha256": descriptor["archive_sha256"],
+            "submission": descriptor,
             "notice": "PR author/account binding checked; other authorship/license claims remain declared.",
         }, sort_keys=True),
     })
