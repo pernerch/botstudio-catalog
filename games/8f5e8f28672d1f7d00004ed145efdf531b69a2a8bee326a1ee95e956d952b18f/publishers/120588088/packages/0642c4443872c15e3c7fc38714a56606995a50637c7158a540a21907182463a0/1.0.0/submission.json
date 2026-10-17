@@ -1,0 +1,17 @@
+{
+  "archive_path": "games/8f5e8f28672d1f7d00004ed145efdf531b69a2a8bee326a1ee95e956d952b18f/publishers/120588088/packages/0642c4443872c15e3c7fc38714a56606995a50637c7158a540a21907182463a0/1.0.0/package.botstudio.zip",
+  "archive_sha256": "80758be244610b7f6bfe66c298eb75ccfc48dec3ccafeed9c37b3ee06a55b5ac",
+  "archive_size": 1853,
+  "fork_of": null,
+  "game_id": "botstudio-synthetic-studio-ui-test",
+  "metadata_path": "games/8f5e8f28672d1f7d00004ed145efdf531b69a2a8bee326a1ee95e956d952b18f/publishers/120588088/packages/0642c4443872c15e3c7fc38714a56606995a50637c7158a540a21907182463a0/1.0.0/submission.json",
+  "package_id": "catalog-studio-dialog-selftest",
+  "package_version": "1.0.0",
+  "repository": "pernerch/botstudio-catalog",
+  "schema_version": 1,
+  "submitter": {
+    "account_id": "120588088",
+    "login": "pernerch",
+    "provider": "github"
+  }
+}
