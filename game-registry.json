@@ -7,13 +7,6 @@
       "android_packages": [
         "com.gof.global"
       ]
-    },
-    {
-      "id": "a4a5f097-013e-4dd3-8615-05e93416899e",
-      "name": "BotStudio Registry Smoke Test 2026-10-19",
-      "android_packages": [
-        "com.botstudio.registry.smoketest"
-      ]
     }
   ]
 }
