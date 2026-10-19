@@ -68,20 +68,34 @@ letter and followed by letters/digits/underscores), at most 255 characters.
 Bodies are at most 4096 UTF-8 bytes; unknown/duplicate fields, caller-selected IDs,
 noninteger schema versions and malformed requests are rejected.
 
-Exact normalized name **or** Android package selects an existing Game. A new
-package for an existing name is recorded as an alias. A package match retains
+An exact Android package selects an existing Game regardless of display wording.
+A normalized-name match with an unknown package is rejected: explicitly select
+the existing Game for a changed local package, or use a distinct edition name.
+Registration never silently appends aliases or merges regional editions.
+Administrators can edit centrally reviewed aliases later. A package match retains
 the canonical name; it does not rename the Game. When name and package select
 different Games, registration fails rather than merging identities.
 
 The trusted issue workflow serializes repeated events for the same issue,
 loads the issue through the API and re-reads the registry on each
-attempt. Updates use Contents PUT with the current SHA and explicit default
-branch, retrying 409/422 conflicts at most three total attempts. It confirms the
-committed registry before returning success. No issue text becomes a shell
+attempt. Updates create a unique server-generated
+`botstudio-game-registration/<issue>-<UUID>` branch from the default branch,
+use Contents PUT with the current file SHA **on that branch**, and create an
+automatic registry-only PR. The workflow freshly verifies its Actions bot author,
+repository, generated branch, exact commit head and single registry path, then
+merges via the ordinary exact-head merge API. It does not write directly to the
+protected default branch or bypass/modify protections. A changed default-branch
+registry aborts the stale proposal before merging. 405/409/422 collisions retry
+from freshly read state at most three total attempts. Failed/superseded PRs get
+diagnostic comments and are closed to prevent later accidental stale merges;
+failed issue comments include their PR numbers. Branches remain for inspection.
+It confirms the committed default-branch registry before success.
+No issue text becomes a shell
 command, import, checkout ref, path, commit message or executable content.
 Different issues do not share an Actions concurrency group: GitHub retains only
 one pending job per group and would otherwise drop queued registrations.
-Optimistic SHA checks prevent concurrent requests from creating duplicate Games.
+SHA checks, merge conflicts and fresh identity checks prevent racing requests
+from blindly overwriting the registry. Retrying reuses an already registered ID.
 
 Success comments contain raw machine-readable JSON
 `{"schema_version":1,"game_id":"<canonical ID>","name":"<canonical name>"}` and the
@@ -106,10 +120,17 @@ Duplicate case-insensitive IDs, normalized names or exact packages fail closed.
 | Administrator-provided seed | `game-registry.json` |
 
 Keep both workflows on the trusted default branch, with pinned checkout and
-`persist-credentials: false`. The issue job needs only `contents: write` and
-`issues: write`; package jobs retain their separate existing permissions.
-Branch protection must explicitly permit the intended automation identity to
-write the registry; protections are never bypassed by the script.
+`persist-credentials: false`. The issue job needs `contents: write`,
+`issues: write` and `pull-requests: write`; package jobs retain their existing
+permissions. Repository Actions settings must allow GitHub Actions to create
+pull requests. PR-only branch protection with zero required approvals and no
+required checks permits automatic ordinary merges; stronger protections remain
+enforced and fail visibly rather than being bypassed.
+The package workflow's trusted script skips package validation/publication only
+after freshly verifying a same-repository `github-actions[bot]` PR (numeric
+41898282), generated registry branch prefix and exactly one modified
+`game-registry.json` file. Other bots, forks, branch names or extra files do not
+qualify; arbitrary submissions continue through normal package validation.
 No workflow deployment, remote write or registry seeding is performed by these
 local templates. `tests/test_catalog_registration_backend.py` is an offline test, not a
 deployment dependency.

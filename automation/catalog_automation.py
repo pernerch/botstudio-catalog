@@ -11,6 +11,7 @@ import re
 from time import monotonic
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 import unicodedata
 import uuid
 from zipfile import ZipFile
@@ -24,6 +25,7 @@ MAX_REGISTRY = 512 * 1024
 MAX_REGISTRY_GAMES = 10000
 REGISTRY_ATTEMPTS = 3
 GAME_ISSUE_PREFIX = "[BotStudio Game] "
+REGISTRY_BRANCH_PREFIX = "botstudio-game-registration/"
 
 
 def require(condition, message):
@@ -143,7 +145,83 @@ def registered_game(registry, name, package):
     by_name = next((game for game in registry["games"] if normalized_game_name(game["name"]) == normalized_game_name(name)), None)
     by_package = next((game for game in registry["games"] if package in game["android_packages"]), None)
     require(by_name is None or by_package is None or by_name["id"] == by_package["id"], "Game name and Android package identify different registered Games")
+    require(by_name is None or by_package is not None,
+            "Game name already registered with another Android package. Select the existing Game explicitly for a changed local package, or use a distinct edition name.")
     return by_name or by_package
+
+
+def trusted_registry_pr(api, number, repository_id, *, expected_head=None):
+    root = f"/repositories/{repository_id}"
+    pr = api.request("GET", f"{root}/pulls/{number}")
+    actor = pr.get("user", {})
+    head = pr.get("head", {})
+    base = pr.get("base", {})
+    if not (
+        actor.get("type") == "Bot" and actor.get("login") == "github-actions[bot]"
+        and actor.get("id") == 41898282
+        and head.get("repo", {}).get("id") == repository_id
+        and base.get("repo", {}).get("id") == repository_id
+        and isinstance(head.get("ref"), str) and re.fullmatch(
+            re.escape(REGISTRY_BRANCH_PREFIX) + r"[1-9][0-9]*-[0-9a-f]{32}", head["ref"],
+        )
+        and pr.get("changed_files") == 1
+    ):
+        return False
+    files = api.request("GET", f"{root}/pulls/{number}/files?per_page=2")
+    return (
+        isinstance(files, list) and len(files) == 1
+        and files[0].get("filename") == "game-registry.json"
+        and files[0].get("status") == "modified"
+        and (expected_head is None or (
+            head.get("sha") == expected_head and pr.get("state") == "open"
+        ))
+    )
+
+
+def write_registry_pr(api, number, repository_id, repo, sha, raw, diagnostics):
+    """Respect PR-only protection; never write or force-update the default branch."""
+    root = f"/repositories/{repository_id}"
+    branch = f"{REGISTRY_BRANCH_PREFIX}{number}-{uuid.uuid4().hex}"
+    default_ref = quote(repo["default_branch"], safe="")
+    base = api.request("GET", f"{root}/git/ref/heads/{default_ref}")
+    base_sha = base["object"]["sha"]
+    require(base["object"]["type"] == "commit" and re.fullmatch(r"[0-9a-f]{40}", base_sha), "invalid default branch head")
+    api.request("POST", f"{root}/git/refs", {"ref": f"refs/heads/{branch}", "sha": base_sha})
+    result = api.request("PUT", f"{root}/contents/game-registry.json", {
+        "message": f"Register Game from issue #{number}", "sha": sha,
+        "branch": branch, "content": base64.b64encode(raw).decode("ascii"),
+    })
+    head = result["commit"]["sha"]
+    require(isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head), "invalid registry commit")
+    pr = api.request("POST", f"{root}/pulls", {
+        "title": f"Register Game from issue #{number}", "head": branch,
+        "base": repo["default_branch"],
+        "body": f"Trusted registry update for issue #{number}. Automatically validated; no package publication.",
+    })
+    pr_number = pr["number"]
+    require(type(pr_number) is int and pr_number > 0, "invalid registry PR number")
+    diagnostics.append(pr_number)
+    pr_path = f"{root}/pulls/{pr_number}"
+    try:
+        require(trusted_registry_pr(api, pr_number, repository_id, expected_head=head), "registry PR identity/files changed")
+        _, current_sha = read_registry(api, repository_id)
+        if current_sha != sha:
+            raise GitHubError(409)
+        result = api.request("PUT", f"{pr_path}/merge", {
+            "sha": head, "merge_method": "merge",
+            "commit_title": f"Accept Game registration #{number}",
+        })
+        if result.get("merged") is not True:
+            raise GitHubError(409)
+    except (ValueError, KeyError, TypeError):
+        # Prevent a stale full-registry proposal from being merged later by accident.
+        api.request("POST", f"{root}/issues/{pr_number}/comments", {"body":
+            "Automatic registry merge failed or was superseded. This proposal is closed; "
+            "the issue workflow re-reads the default-branch registry before retrying. "
+            "Inspect the workflow diagnostics; do not manually merge this stale proposal."
+        })
+        api.request("PATCH", pr_path, {"state": "closed"})
+        raise
 
 
 def register_game(api, number, repository_id):
@@ -154,6 +232,7 @@ def register_game(api, number, repository_id):
     issue = api.request("GET", issue_path)
     if not isinstance(issue, dict) or not isinstance(issue.get("title"), str) or not issue["title"].startswith(GAME_ISSUE_PREFIX):
         return None
+    diagnostics = []
     try:
         name, package = registration_request(issue)
         for attempt in range(REGISTRY_ATTEMPTS):
@@ -171,21 +250,14 @@ def register_game(api, number, repository_id):
                 game = {"id": str(uuid.uuid4()), "name": name, "android_packages": [package]}
                 registry["games"].append(game)
                 changed = True
-            elif package not in game["android_packages"]:
-                game["android_packages"].append(package)
-                changed = True
             if changed:
                 validate_registry(registry)
                 raw = (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
                 require(len(raw) <= MAX_REGISTRY, "Game registry capacity exceeded")
                 try:
-                    api.request("PUT", f"{root}/contents/game-registry.json", {
-                        "message": f"Register Game from issue #{number}", "sha": sha,
-                        "branch": repo["default_branch"],
-                        "content": base64.b64encode(raw).decode("ascii"),
-                    })
+                    write_registry_pr(api, number, repository_id, repo, sha, raw, diagnostics)
                 except GitHubError as error:
-                    if error.status in (409, 422) and attempt + 1 < REGISTRY_ATTEMPTS:
+                    if error.status in (405, 409, 422) and attempt + 1 < REGISTRY_ATTEMPTS:
                         continue
                     raise
                 # Confirm the live committed identity, including after a competing write.
@@ -199,7 +271,8 @@ def register_game(api, number, repository_id):
     except (ValueError, KeyError, TypeError, RecursionError):
         # Never reflect untrusted issue text or raw transport errors into Markdown.
         api.request("POST", f"{issue_path}/comments", {"body": json.dumps({
-            "schema_version": 1, "error": "Game registration failed. Check the request fields, conflicting identities, registry capacity and workflow diagnostics; reopen to retry.",
+            "schema_version": 1, "error": "Game registration failed. Check the request fields and workflow diagnostics. If the name already exists with another package, select the existing Game explicitly for a changed local package or use a distinct edition name. Reopen to retry.",
+            "registry_pull_requests": diagnostics,
         })})
         raise
 
@@ -499,9 +572,15 @@ def main():
         register_game(api, args.issue, repository_id)
     elif args.mode == "validate":
         require(args.pr is not None and args.pr > 0 and args.issue is None, "invalid PR argument")
+        if trusted_registry_pr(api, args.pr, repository_id):
+            print("Trusted registry-only PR; package validation skipped.")
+            return
         validate_pr(api, args.pr, repository_id, allow_merged=True)
     else:
         require(args.pr is not None and args.pr > 0 and args.issue is None, "invalid PR argument")
+        if trusted_registry_pr(api, args.pr, repository_id):
+            print("Trusted registry-only PR; package publication skipped.")
+            return
         publish(api, args.pr, repository_id)
     print("Catalog operation completed successfully.")
 
