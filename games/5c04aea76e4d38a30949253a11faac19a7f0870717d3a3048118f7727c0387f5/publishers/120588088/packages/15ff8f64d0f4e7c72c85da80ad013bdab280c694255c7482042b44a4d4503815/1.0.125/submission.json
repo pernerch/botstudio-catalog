@@ -1,0 +1,17 @@
+{
+  "archive_path": "games/5c04aea76e4d38a30949253a11faac19a7f0870717d3a3048118f7727c0387f5/publishers/120588088/packages/15ff8f64d0f4e7c72c85da80ad013bdab280c694255c7482042b44a4d4503815/1.0.125/package.botstudio.zip",
+  "archive_sha256": "40289e753d29562fbdd15b03c7e7d4f568908f9dc7dc020538f9450d635a010a",
+  "archive_size": 10515931,
+  "fork_of": null,
+  "game_id": "whiteout_survival",
+  "metadata_path": "games/5c04aea76e4d38a30949253a11faac19a7f0870717d3a3048118f7727c0387f5/publishers/120588088/packages/15ff8f64d0f4e7c72c85da80ad013bdab280c694255c7482042b44a4d4503815/1.0.125/submission.json",
+  "package_id": "helper-b86b6adbf7877dc84502d5aef5f7e871",
+  "package_version": "1.0.125",
+  "repository": "pernerch/botstudio-catalog",
+  "schema_version": 1,
+  "submitter": {
+    "account_id": "120588088",
+    "login": "pernerch",
+    "provider": "github"
+  }
+}
